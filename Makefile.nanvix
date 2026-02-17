@@ -91,7 +91,44 @@ install: $(STATICLIB)
 	install -m644 $(STATICLIB) "$(DESTDIR)$(PREFIX)/lib/"
 	install -m644 expat/lib/expat.h expat/lib/expat_external.h "$(DESTDIR)$(PREFIX)/include/"
 
-clean:
-	rm -f *.o $(STATICLIB)
+# Test: compile and run a minimal XML parsing test on nanvixd.elf
+SYSROOT_PATH = $(abspath $(NANVIX_HOME))
+LIBC = $(NANVIX_TOOLCHAIN)/i686-nanvix/lib/libc.a
+LIBM = $(NANVIX_TOOLCHAIN)/i686-nanvix/lib/libm.a
+LIBPOSIX = $(SYSROOT_PATH)/lib/libposix.a
 
-.PHONY: all clean install
+test: $(STATICLIB)
+	@echo "Running libexpat tests on Nanvix..."
+	@echo '#include <stdio.h>'                          >  /tmp/expat_test.c
+	@echo '#include <string.h>'                         >> /tmp/expat_test.c
+	@echo '#include "expat.h"'                          >> /tmp/expat_test.c
+	@echo 'static int element_count = 0;'               >> /tmp/expat_test.c
+	@echo 'void start(void *d, const char *el, const char **a) { element_count++; }' >> /tmp/expat_test.c
+	@echo 'int main() {'                                >> /tmp/expat_test.c
+	@echo '  XML_Parser p = XML_ParserCreate(NULL);'    >> /tmp/expat_test.c
+	@echo '  if (!p) { printf("EXPAT_TEST: FAIL create\\n"); return 1; }' >> /tmp/expat_test.c
+	@echo '  XML_SetStartElementHandler(p, start);'     >> /tmp/expat_test.c
+	@echo '  const char *xml = "<root><a/><b/></root>";' >> /tmp/expat_test.c
+	@echo '  if (XML_Parse(p, xml, strlen(xml), 1) == XML_STATUS_ERROR) {' >> /tmp/expat_test.c
+	@echo '    printf("EXPAT_TEST: FAIL parse\\n"); return 1; }' >> /tmp/expat_test.c
+	@echo '  XML_ParserFree(p);'                        >> /tmp/expat_test.c
+	@echo '  printf("EXPAT_TEST: PASS elements=%d\\n", element_count);' >> /tmp/expat_test.c
+	@echo '  return 0; }'                               >> /tmp/expat_test.c
+	$(CC) -O2 -Iexpat/lib /tmp/expat_test.c -L. -lexpat \
+		-static -T$(SYSROOT_PATH)/lib/user.ld -Wl,--allow-multiple-definition \
+		-Wl,--start-group $(LIBPOSIX) $(LIBC) $(LIBM) -Wl,--end-group \
+		-o expat_test.elf
+	cd "$(SYSROOT_PATH)" && \
+		timeout 120 ./bin/nanvixd.elf -- $(abspath expat_test.elf) > /tmp/expat_test.log 2>&1; \
+		if grep -q 'EXPAT_TEST: PASS' /tmp/expat_test.log; then \
+			echo "  PASS: $$(grep 'EXPAT_TEST:' /tmp/expat_test.log)"; \
+		else \
+			echo "  FAIL: Expat test did not pass"; cat /tmp/expat_test.log; exit 1; \
+		fi
+	@rm -f /tmp/expat_test.c /tmp/expat_test.log
+	@echo "		*** libexpat tests PASSED ***"
+
+clean:
+	rm -f *.o $(STATICLIB) expat_test.elf
+
+.PHONY: all clean install test
