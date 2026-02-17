@@ -86,22 +86,31 @@ jobs:
 
       - name: Build
         run: |
-          make -f Makefile.nanvix CONFIG_NANVIX=y NANVIX_HOME="$NANVIX_HOME" NANVIX_TOOLCHAIN="/opt/nanvix" all
+          make -f Makefile.nanvix CONFIG_NANVIX=y \
+            NANVIX_HOME="$NANVIX_HOME" NANVIX_TOOLCHAIN="/opt/nanvix" all
 
-      - name: Test
+      - name: Smoke Tests
         run: |
-          make -f Makefile.nanvix CONFIG_NANVIX=y NANVIX_HOME="$NANVIX_HOME" NANVIX_TOOLCHAIN="/opt/nanvix" test
+          make -f Makefile.nanvix CONFIG_NANVIX=y \
+            NANVIX_HOME="$NANVIX_HOME" NANVIX_TOOLCHAIN="/opt/nanvix" test-smoke
 
-      - name: Package Artifacts
+      - name: Integration Tests
         run: |
-          set -euo pipefail
+          make -f Makefile.nanvix CONFIG_NANVIX=y \
+            NANVIX_HOME="$NANVIX_HOME" NANVIX_TOOLCHAIN="/opt/nanvix" test-integration
+
+      - name: Functional Tests
+        run: |
+          make -f Makefile.nanvix CONFIG_NANVIX=y \
+            NANVIX_HOME="$NANVIX_HOME" NANVIX_TOOLCHAIN="/opt/nanvix" test-functional
+
+      - name: Package
+        run: |
+          make -f Makefile.nanvix CONFIG_NANVIX=y \
+            NANVIX_HOME="$NANVIX_HOME" NANVIX_TOOLCHAIN="/opt/nanvix" \
+            PLATFORM="${{ matrix.platform }}" PROCESS_MODE="${{ matrix.process-mode }}" \
+            package
           ARTIFACT_NAME="expat-${{ matrix.platform }}-${{ matrix.process-mode }}"
-          DIST_DIR="dist/${ARTIFACT_NAME}"
-          mkdir -p "${DIST_DIR}/lib" "${DIST_DIR}/include"
-          cp -f libexpat.a "${DIST_DIR}/lib/"
-          cp -f expat/lib/expat.h "${DIST_DIR}/include/"
-          cp -f expat/lib/expat_external.h "${DIST_DIR}/include/"
-          tar -cjf "dist/${ARTIFACT_NAME}.tar.bz2" -C dist "${ARTIFACT_NAME}"
           echo "ARTIFACT_TARBALL=dist/${ARTIFACT_NAME}.tar.bz2" >> "$GITHUB_ENV"
 
       - name: Upload Build Artifacts
@@ -171,8 +180,14 @@ jobs:
           - Published: ${NANVIX_PUBLISHED}
           - Commit: [${NANVIX_SHA_FULL}](https://github.com/nanvix/nanvix/commit/${NANVIX_SHA_FULL})
 
-          **Dependencies:**
-          - None (standalone library)" \
+          **Package Layout:**
+          \`\`\`
+          sysroot/
+            lib/libexpat.a
+            include/{expat.h,expat_external.h}
+          \`\`\`
+
+          **Dependencies:** None (standalone library)" \
             --latest \
             release-assets/*.tar.bz2
 

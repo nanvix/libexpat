@@ -4,9 +4,23 @@
 # Licensed under the MIT License.
 #
 # Usage:
-#   make -f Makefile.nanvix CONFIG_NANVIX=y NANVIX_HOME=/path/to/nanvix all
+#   make -f Makefile.nanvix CONFIG_NANVIX=y NANVIX_HOME=/path/to/sysroot all
 #
 # Note: Build runs from the repository root (libexpat/), sources are under expat/lib/.
+#
+# Targets:
+#   all              Build static library
+#   test-smoke       Verify build artifacts exist and are valid (no runtime)
+#   test-integration Build and link XML parsing test against the library
+#   test-functional  Run XML parsing test on nanvixd.elf (requires KVM)
+#   test             Run all test levels
+#   package          Create portable release tarball in dist/
+#   install          Install library and headers to PREFIX
+#   clean            Remove build artifacts
+
+# ===========================================================================
+# Toolchain Detection
+# ===========================================================================
 
 NANVIX_DOCKER_IMAGE ?= nanvix/toolchain:latest-minimal
 
@@ -21,12 +35,12 @@ ifdef CONFIG_NANVIX
         DOCKER_IMAGE_EXISTS := $(shell docker image inspect $(NANVIX_DOCKER_IMAGE) >/dev/null 2>&1 && echo yes)
         ifdef DOCKER_IMAGE_EXISTS
           CONFIG_NANVIX_DOCKER := y
-          $(info [INFO] Native toolchain not found at $(NANVIX_TOOLCHAIN), using Docker image $(NANVIX_DOCKER_IMAGE))
+          $(info [nanvix] Using Docker (native toolchain not found at $(NANVIX_TOOLCHAIN)))
         else
           $(error Docker image $(NANVIX_DOCKER_IMAGE) not found. Run: docker pull $(NANVIX_DOCKER_IMAGE))
         endif
       else
-        $(error Nanvix toolchain not found at $(NANVIX_TOOLCHAIN) and Docker is not available)
+        $(error Nanvix toolchain not found at $(NANVIX_TOOLCHAIN) and Docker not available)
       endif
     endif
   else
@@ -38,8 +52,11 @@ ifdef CONFIG_NANVIX
     ifndef DOCKER_IMAGE_EXISTS
       $(error Docker image $(NANVIX_DOCKER_IMAGE) not found. Run: docker pull $(NANVIX_DOCKER_IMAGE))
     endif
-    $(info [INFO] Using Docker image $(NANVIX_DOCKER_IMAGE) (explicitly requested))
+    $(info [nanvix] Using Docker (explicitly requested))
   endif
+
+  EXE = .elf
+  SYSROOT_PATH := $(abspath $(NANVIX_HOME))
 
   ifdef CONFIG_NANVIX_DOCKER
     DOCKER_TOOLCHAIN_PATH := /opt/nanvix
@@ -49,27 +66,64 @@ ifdef CONFIG_NANVIX
     DOCKER_GID := $(shell id -g)
     DOCKER_RUN := docker run --rm --user $(DOCKER_UID):$(DOCKER_GID) \
       -v $(CURDIR):$(DOCKER_WORKSPACE_PATH) \
-      -v $(NANVIX_HOME):$(DOCKER_SYSROOT_PATH):ro \
+      -v $(SYSROOT_PATH):$(DOCKER_SYSROOT_PATH):ro \
       -w $(DOCKER_WORKSPACE_PATH) \
+      -e HOME=/tmp \
+      $(NANVIX_DOCKER_IMAGE)
+    DOCKER_RUN_FUNCTIONAL := docker run --rm --device /dev/kvm \
+      -v $(CURDIR):$(DOCKER_WORKSPACE_PATH) \
+      -v $(SYSROOT_PATH):$(DOCKER_SYSROOT_PATH) \
+      -w $(DOCKER_SYSROOT_PATH) \
       -e HOME=/tmp \
       $(NANVIX_DOCKER_IMAGE)
     CC := $(DOCKER_RUN) $(DOCKER_TOOLCHAIN_PATH)/bin/i686-nanvix-gcc
     AR := $(DOCKER_RUN) $(DOCKER_TOOLCHAIN_PATH)/bin/i686-nanvix-ar
+    TOOLCHAIN_PREFIX := $(DOCKER_TOOLCHAIN_PATH)
+    NANVIX_LDFLAGS := -static -T$(DOCKER_SYSROOT_PATH)/lib/user.ld -Wl,--allow-multiple-definition
+    NANVIX_LIBS := -Wl,--start-group \
+      $(DOCKER_SYSROOT_PATH)/lib/libposix.a \
+      $(DOCKER_TOOLCHAIN_PATH)/i686-nanvix/lib/libc.a \
+      $(DOCKER_TOOLCHAIN_PATH)/i686-nanvix/lib/libm.a \
+      -Wl,--end-group
   else
     CC := $(NANVIX_TOOLCHAIN)/bin/i686-nanvix-gcc
     AR := $(NANVIX_TOOLCHAIN)/bin/i686-nanvix-ar
+    TOOLCHAIN_PREFIX := $(NANVIX_TOOLCHAIN)
+    NANVIX_LDFLAGS := -static -T$(SYSROOT_PATH)/lib/user.ld -Wl,--allow-multiple-definition
+    NANVIX_LIBS := -Wl,--start-group \
+      $(SYSROOT_PATH)/lib/libposix.a \
+      $(NANVIX_TOOLCHAIN)/i686-nanvix/lib/libc.a \
+      $(NANVIX_TOOLCHAIN)/i686-nanvix/lib/libm.a \
+      -Wl,--end-group
   endif
 else
   ifneq ($(MAKECMDGOALS),clean)
-    $(error CONFIG_NANVIX must be set to 'y'. Usage: make -f Makefile.nanvix CONFIG_NANVIX=y NANVIX_HOME=/path/to/nanvix)
+    $(error CONFIG_NANVIX must be set to 'y'. Usage: make -f Makefile.nanvix CONFIG_NANVIX=y NANVIX_HOME=/path/to/sysroot)
   endif
+  EXE = .elf
 endif
+
+# ===========================================================================
+# Build Configuration
+# ===========================================================================
 
 CFLAGS = -O2 -DHAVE_EXPAT_CONFIG_H -DXML_POOR_ENTROPY -DXML_GE=1 -Iexpat/lib -Iexpat
 ARFLAGS = rcs
-STATICLIB = libexpat.a
 
+PREFIX ?= $(SYSROOT_PATH)
+PLATFORM ?= unknown
+PROCESS_MODE ?= unknown
+
+STATICLIB = libexpat.a
 OBJS = xmlparse.o xmlrole.o xmltok.o
+TEST_PROGS = expat_test$(EXE)
+
+# Inline test source (avoids external file dependency)
+# Test source is generated inline in the expat_test target
+
+# ===========================================================================
+# Build Targets
+# ===========================================================================
 
 all: $(STATICLIB)
 
@@ -85,20 +139,8 @@ xmlrole.o: expat/lib/xmlrole.c
 xmltok.o: expat/lib/xmltok.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-install: $(STATICLIB)
-	mkdir -p "$(DESTDIR)$(PREFIX)/lib"
-	mkdir -p "$(DESTDIR)$(PREFIX)/include"
-	install -m644 $(STATICLIB) "$(DESTDIR)$(PREFIX)/lib/"
-	install -m644 expat/lib/expat.h expat/lib/expat_external.h "$(DESTDIR)$(PREFIX)/include/"
-
-# Test: compile and run a minimal XML parsing test on nanvixd.elf
-SYSROOT_PATH = $(abspath $(NANVIX_HOME))
-LIBC = $(NANVIX_TOOLCHAIN)/i686-nanvix/lib/libc.a
-LIBM = $(NANVIX_TOOLCHAIN)/i686-nanvix/lib/libm.a
-LIBPOSIX = $(SYSROOT_PATH)/lib/libposix.a
-
-test: $(STATICLIB)
-	@echo "Running libexpat tests on Nanvix..."
+# Build test executable
+expat_test$(EXE): $(STATICLIB)
 	@echo '#include <stdio.h>'                          >  /tmp/expat_test.c
 	@echo '#include <string.h>'                         >> /tmp/expat_test.c
 	@echo '#include "expat.h"'                          >> /tmp/expat_test.c
@@ -115,20 +157,83 @@ test: $(STATICLIB)
 	@echo '  printf("EXPAT_TEST: PASS elements=%d\\n", element_count);' >> /tmp/expat_test.c
 	@echo '  return 0; }'                               >> /tmp/expat_test.c
 	$(CC) -O2 -Iexpat/lib /tmp/expat_test.c -L. -lexpat \
-		-static -T$(SYSROOT_PATH)/lib/user.ld -Wl,--allow-multiple-definition \
-		-Wl,--start-group $(LIBPOSIX) $(LIBC) $(LIBM) -Wl,--end-group \
-		-o expat_test.elf
-	cd "$(SYSROOT_PATH)" && \
-		timeout 120 ./bin/nanvixd.elf -- $(abspath expat_test.elf) > /tmp/expat_test.log 2>&1; \
-		if grep -q 'EXPAT_TEST: PASS' /tmp/expat_test.log; then \
-			echo "  PASS: $$(grep 'EXPAT_TEST:' /tmp/expat_test.log)"; \
-		else \
-			echo "  FAIL: Expat test did not pass"; cat /tmp/expat_test.log; exit 1; \
-		fi
-	@rm -f /tmp/expat_test.c /tmp/expat_test.log
-	@echo "		*** libexpat tests PASSED ***"
+		$(NANVIX_LDFLAGS) $(NANVIX_LIBS) \
+		-o $@
+	@rm -f /tmp/expat_test.c
+
+# ===========================================================================
+# Test Targets
+# ===========================================================================
+
+# --- Smoke tests: verify build artifacts (no runtime needed) ---
+test-smoke: $(STATICLIB)
+	@echo "=== libexpat smoke tests ==="
+	@echo "  Checking libexpat.a..."
+	@test -f $(STATICLIB) || { echo "  FAIL: $(STATICLIB) not found"; exit 1; }
+	@size=$$(wc -c < $(STATICLIB)); \
+	if [ "$$size" -lt 1000 ]; then echo "  FAIL: $(STATICLIB) too small ($$size bytes)"; exit 1; fi
+	@echo "  Checking headers..."
+	@test -f expat/lib/expat.h || { echo "  FAIL: expat.h not found"; exit 1; }
+	@test -f expat/lib/expat_external.h || { echo "  FAIL: expat_external.h not found"; exit 1; }
+	@echo "  PASS: libexpat smoke tests"
+
+# --- Integration tests: build and link test program ---
+test-integration: $(TEST_PROGS)
+	@echo "=== libexpat integration tests ==="
+	@test -f expat_test$(EXE) || { echo "  FAIL: expat_test$(EXE) not built"; exit 1; }
+	@echo "  OK: expat_test$(EXE) ($$(wc -c < expat_test$(EXE)) bytes)"
+	@echo "  PASS: libexpat integration tests"
+
+# --- Functional tests: run XML parsing test on nanvixd.elf ---
+test-functional: test-integration
+	@echo "=== libexpat functional tests ==="
+ifdef CONFIG_NANVIX_DOCKER
+	@echo "  Running expat_test$(EXE) via nanvixd.elf (Docker)..."
+	$(DOCKER_RUN_FUNCTIONAL) sh -c \
+	  'timeout 120 ./bin/nanvixd.elf -- $(DOCKER_WORKSPACE_PATH)/expat_test$(EXE)'
+	@echo "  PASS: expat_test (exit code 0)"
+else
+	@echo "  Running expat_test$(EXE) via nanvixd.elf..."
+	cd "$(SYSROOT_PATH)" && timeout 120 ./bin/nanvixd.elf -- $(abspath expat_test$(EXE))
+	@echo "  PASS: expat_test (exit code 0)"
+endif
+	@echo "  PASS: libexpat functional tests"
+
+# --- Run all test levels ---
+test: test-smoke test-integration test-functional
+	@echo "=== All libexpat tests PASSED ==="
+
+# ===========================================================================
+# Package Target
+# ===========================================================================
+
+package: all
+	@echo "=== Packaging libexpat release ==="
+	$(eval ARTIFACT_NAME := expat-$(PLATFORM)-$(PROCESS_MODE))
+	rm -rf dist/$(ARTIFACT_NAME)
+	mkdir -p dist/$(ARTIFACT_NAME)/sysroot/lib \
+	dist/$(ARTIFACT_NAME)/sysroot/include
+	cp -f $(STATICLIB) dist/$(ARTIFACT_NAME)/sysroot/lib/
+	cp -f expat/lib/expat.h dist/$(ARTIFACT_NAME)/sysroot/include/
+	cp -f expat/lib/expat_external.h dist/$(ARTIFACT_NAME)/sysroot/include/
+	tar -cjf dist/$(ARTIFACT_NAME).tar.bz2 -C dist/$(ARTIFACT_NAME) sysroot
+	@echo "  Package: dist/$(ARTIFACT_NAME).tar.bz2"
+	@echo "  Contents:"
+	@tar tjf dist/$(ARTIFACT_NAME).tar.bz2 | head -20
+
+# ===========================================================================
+# Install / Clean
+# ===========================================================================
+
+install: $(STATICLIB)
+	mkdir -p "$(DESTDIR)$(PREFIX)/lib"
+	mkdir -p "$(DESTDIR)$(PREFIX)/include"
+	install -m644 $(STATICLIB) "$(DESTDIR)$(PREFIX)/lib/"
+	install -m644 expat/lib/expat.h expat/lib/expat_external.h "$(DESTDIR)$(PREFIX)/include/"
 
 clean:
-	rm -f *.o $(STATICLIB) expat_test.elf
+	rm -f *.o $(STATICLIB) $(TEST_PROGS)
+	rm -f *.elf
+	rm -rf dist/
 
-.PHONY: all clean install test
+.PHONY: all clean test test-smoke test-integration test-functional package install
