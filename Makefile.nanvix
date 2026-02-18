@@ -70,11 +70,14 @@ ifdef CONFIG_NANVIX
       -w $(DOCKER_WORKSPACE_PATH) \
       -e HOME=/tmp \
       $(NANVIX_DOCKER_IMAGE)
+    DOCKER_KVM_GID := $(shell stat -c '%g' /dev/kvm 2>/dev/null || echo 0)
     DOCKER_RUN_FUNCTIONAL := docker run --rm --device /dev/kvm \
+      --user $(DOCKER_UID):$(DOCKER_GID) --group-add $(DOCKER_KVM_GID) \
       -v $(CURDIR):$(DOCKER_WORKSPACE_PATH) \
       -v $(SYSROOT_PATH):$(DOCKER_SYSROOT_PATH) \
       -w $(DOCKER_SYSROOT_PATH) \
       -e HOME=/tmp \
+      -e USER=$(shell whoami) \
       $(NANVIX_DOCKER_IMAGE)
     CC := $(DOCKER_RUN) $(DOCKER_TOOLCHAIN_PATH)/bin/i686-nanvix-gcc
     AR := $(DOCKER_RUN) $(DOCKER_TOOLCHAIN_PATH)/bin/i686-nanvix-ar
@@ -141,25 +144,25 @@ xmltok.o: expat/lib/xmltok.c
 
 # Build test executable
 expat_test$(EXE): $(STATICLIB)
-	@echo '#include <stdio.h>'                          >  /tmp/expat_test.c
-	@echo '#include <string.h>'                         >> /tmp/expat_test.c
-	@echo '#include "expat.h"'                          >> /tmp/expat_test.c
-	@echo 'static int element_count = 0;'               >> /tmp/expat_test.c
-	@echo 'void start(void *d, const char *el, const char **a) { element_count++; }' >> /tmp/expat_test.c
-	@echo 'int main() {'                                >> /tmp/expat_test.c
-	@echo '  XML_Parser p = XML_ParserCreate(NULL);'    >> /tmp/expat_test.c
-	@echo '  if (!p) { printf("EXPAT_TEST: FAIL create\\n"); return 1; }' >> /tmp/expat_test.c
-	@echo '  XML_SetStartElementHandler(p, start);'     >> /tmp/expat_test.c
-	@echo '  const char *xml = "<root><a/><b/></root>";' >> /tmp/expat_test.c
-	@echo '  if (XML_Parse(p, xml, strlen(xml), 1) == XML_STATUS_ERROR) {' >> /tmp/expat_test.c
-	@echo '    printf("EXPAT_TEST: FAIL parse\\n"); return 1; }' >> /tmp/expat_test.c
-	@echo '  XML_ParserFree(p);'                        >> /tmp/expat_test.c
-	@echo '  printf("EXPAT_TEST: PASS elements=%d\\n", element_count);' >> /tmp/expat_test.c
-	@echo '  return 0; }'                               >> /tmp/expat_test.c
-	$(CC) -O2 -Iexpat/lib /tmp/expat_test.c -L. -lexpat \
+	@echo '#include <stdio.h>'                          >  _expat_test.c
+	@echo '#include <string.h>'                         >> _expat_test.c
+	@echo '#include "expat.h"'                          >> _expat_test.c
+	@echo 'static int element_count = 0;'               >> _expat_test.c
+	@echo 'void start(void *d, const char *el, const char **a) { element_count++; }' >> _expat_test.c
+	@echo 'int main() {'                                >> _expat_test.c
+	@echo '  XML_Parser p = XML_ParserCreate(NULL);'    >> _expat_test.c
+	@echo '  if (!p) { printf("EXPAT_TEST: FAIL create\\n"); return 1; }' >> _expat_test.c
+	@echo '  XML_SetStartElementHandler(p, start);'     >> _expat_test.c
+	@echo '  const char *xml = "<root><a/><b/></root>";' >> _expat_test.c
+	@echo '  if (XML_Parse(p, xml, strlen(xml), 1) == XML_STATUS_ERROR) {' >> _expat_test.c
+	@echo '    printf("EXPAT_TEST: FAIL parse\\n"); return 1; }' >> _expat_test.c
+	@echo '  XML_ParserFree(p);'                        >> _expat_test.c
+	@echo '  printf("EXPAT_TEST: PASS elements=%d\\n", element_count);' >> _expat_test.c
+	@echo '  return 0; }'                               >> _expat_test.c
+	$(CC) -O2 -Iexpat/lib _expat_test.c -L. -lexpat \
 		$(NANVIX_LDFLAGS) $(NANVIX_LIBS) \
 		-o $@
-	@rm -f /tmp/expat_test.c
+	@rm -f _expat_test.c
 
 # ===========================================================================
 # Test Targets
@@ -190,11 +193,11 @@ test-functional: test-integration
 ifdef CONFIG_NANVIX_DOCKER
 	@echo "  Running expat_test$(EXE) via nanvixd.elf (Docker)..."
 	$(DOCKER_RUN_FUNCTIONAL) sh -c \
-	  'timeout 120 ./bin/nanvixd.elf -- $(DOCKER_WORKSPACE_PATH)/expat_test$(EXE)'
+	  'timeout --foreground 120 ./bin/nanvixd.elf -- $(DOCKER_WORKSPACE_PATH)/expat_test$(EXE)'
 	@echo "  PASS: expat_test (exit code 0)"
 else
 	@echo "  Running expat_test$(EXE) via nanvixd.elf..."
-	cd "$(SYSROOT_PATH)" && timeout 120 ./bin/nanvixd.elf -- $(abspath expat_test$(EXE))
+	cd "$(SYSROOT_PATH)" && timeout --foreground 120 ./bin/nanvixd.elf -- $(abspath expat_test$(EXE))
 	@echo "  PASS: expat_test (exit code 0)"
 endif
 	@echo "  PASS: libexpat functional tests"
@@ -232,7 +235,7 @@ install: $(STATICLIB)
 	install -m644 expat/lib/expat.h expat/lib/expat_external.h "$(DESTDIR)$(PREFIX)/include/"
 
 clean:
-	rm -f *.o $(STATICLIB) $(TEST_PROGS)
+	rm -f *.o $(STATICLIB) $(TEST_PROGS) _expat_test.c
 	rm -f *.elf
 	rm -rf dist/
 
