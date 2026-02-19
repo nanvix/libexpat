@@ -193,6 +193,7 @@ jobs:
           sysroot/
             lib/libexpat.a
             include/{expat.h,expat_external.h}
+            bin/expat_test.elf
           \`\`\`
 
           **Dependencies:** None (standalone library)" \
