@@ -225,6 +225,24 @@ package: all
 	@tar tjf dist/$(ARTIFACT_NAME).tar.bz2 | head -20
 
 # ===========================================================================
+# Verify Package
+# ===========================================================================
+
+verify-package:
+	@echo "=== Verifying libexpat package ==="
+	$(eval ARTIFACT_NAME := expat-$(PLATFORM)-$(PROCESS_MODE))
+	@TARBALL="dist/$(ARTIFACT_NAME).tar.bz2"; \
+	if [ ! -f "$$TARBALL" ]; then \
+	  echo "FAIL: Package tarball not found: $$TARBALL"; exit 1; \
+	fi; \
+	echo "Package contents:"; \
+	tar tjf "$$TARBALL"; \
+	if ! tar tjf "$$TARBALL" | grep -q 'sysroot/lib/'; then \
+	  echo "FAIL: Package missing sysroot/lib/ entries"; exit 1; \
+	fi; \
+	echo "  PASS: libexpat package verification"
+
+# ===========================================================================
 # Install / Clean
 # ===========================================================================
 
@@ -239,4 +257,4 @@ clean:
 	rm -f *.elf
 	rm -rf dist/
 
-.PHONY: all clean test test-smoke test-integration test-functional package install
+.PHONY: all clean test test-smoke test-integration test-functional package verify-package install
