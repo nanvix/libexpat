@@ -215,10 +215,12 @@ package: all
 	$(eval ARTIFACT_NAME := expat-$(PLATFORM)-$(PROCESS_MODE))
 	rm -rf dist/$(ARTIFACT_NAME)
 	mkdir -p dist/$(ARTIFACT_NAME)/sysroot/lib \
-	dist/$(ARTIFACT_NAME)/sysroot/include
+	dist/$(ARTIFACT_NAME)/sysroot/include \
+	dist/$(ARTIFACT_NAME)/sysroot/bin
 	cp -f $(STATICLIB) dist/$(ARTIFACT_NAME)/sysroot/lib/
 	cp -f expat/lib/expat.h dist/$(ARTIFACT_NAME)/sysroot/include/
 	cp -f expat/lib/expat_external.h dist/$(ARTIFACT_NAME)/sysroot/include/
+	-cp -f $(TEST_PROGS) dist/$(ARTIFACT_NAME)/sysroot/bin/ 2>/dev/null || true
 	tar -cjf dist/$(ARTIFACT_NAME).tar.bz2 -C dist/$(ARTIFACT_NAME) sysroot
 	@echo "  Package: dist/$(ARTIFACT_NAME).tar.bz2"
 	@echo "  Contents:"
