@@ -116,6 +116,7 @@ ARFLAGS = rcs
 PREFIX ?= $(SYSROOT_PATH)
 PLATFORM ?= unknown
 PROCESS_MODE ?= unknown
+MEMORY_SIZE ?= unknown
 
 STATICLIB = libexpat.a
 OBJS = xmlparse.o xmlrole.o xmltok.o
@@ -236,7 +237,7 @@ test: test-smoke test-integration test-functional
 
 package: all
 	@echo "=== Packaging libexpat release ==="
-	$(eval ARTIFACT_NAME := expat-$(PLATFORM)-$(PROCESS_MODE))
+	$(eval ARTIFACT_NAME := expat-$(PLATFORM)-$(PROCESS_MODE)-$(MEMORY_SIZE))
 	rm -rf dist/$(ARTIFACT_NAME)
 	mkdir -p dist/$(ARTIFACT_NAME)/sysroot/lib \
 	dist/$(ARTIFACT_NAME)/sysroot/include \
@@ -256,7 +257,7 @@ package: all
 
 verify-package:
 	@echo "=== Verifying libexpat package ==="
-	$(eval ARTIFACT_NAME := expat-$(PLATFORM)-$(PROCESS_MODE))
+	$(eval ARTIFACT_NAME := expat-$(PLATFORM)-$(PROCESS_MODE)-$(MEMORY_SIZE))
 	@TARBALL="dist/$(ARTIFACT_NAME).tar.bz2"; \
 	if [ ! -f "$$TARBALL" ]; then \
 	  echo "FAIL: Package tarball not found: $$TARBALL"; exit 1; \
